@@ -23,12 +23,6 @@ I plan to use these monads to construct the parts of my interpreter
 > import Control.Monad.State
 > import Control.Monad.Writer
 
-> import Control.Concurrent
-
-sorry
-
-> import System.IO.Unsafe
-
 {-------------------------------------------------------------------}
 {- The pure expression language                                    -}
 {-------------------------------------------------------------------}
@@ -116,7 +110,6 @@ Evaluate an expression
 >                | Print Expr
 >                | Seq Statement Statement
 >                | Try Statement Statement
->                | Fork Statement
 >                | Input Name 
 >                | Pass                    
 >       deriving (Eq, Read, Show)
@@ -165,11 +158,6 @@ because we have to pass through StateT and ErrorT to reach the IO monad.
 > exec (While cond s) = do st <- get
 >                          Right (B val) <- return $ runEval st (eval cond)
 >                          if val then do exec s >> exec (While cond s) else return ()
-
-> exec (Fork s) = do st <- get
->                    liftIO $ System.print "?!?!"
->                    let a = forkIO $ liftIO $ runErrorT $ (runStateT $ exec s) st 
->                    return ()                  
 
 > exec (Try s0 s1) = do catchError (exec s0) (\e -> exec s1)
 
@@ -259,11 +247,11 @@ resulting Statement with an empty variable map.
 
 runS just runs through a statement:
 
-> runS :: Env -> Statement -> IO ()
-> runS env s = do result <- runErrorT $ (runStateT $ exec s) env
->                 case result of
->                   Right ( (), env ) -> do dump env
->                   Left exn -> System.print ("Uncaught exception: "++exn)
+> runS :: Statement -> IO ()
+> runS s = do result <- runErrorT $ (runStateT $ exec s) Map.empty
+>             case result of
+>                  Right ( (), env ) -> do dump env
+>                  Left exn -> System.print ("Uncaught exception: "++exn)
 
 Dump folds the Env into a single printable string with each variable on a new line in the form "name : value"
 
@@ -274,8 +262,8 @@ Dump folds the Env into a single printable string with each variable on a new li
  
 And run just compiles a program into a Statement and uses runS:
 
-> run :: Env -> Program -> IO ()
-> run env p = runS env $ compile p
+> run :: Program -> IO ()
+> run p = runS $ compile p
 
 And finally some convenience functions for our syntactic sugar:
 
@@ -333,6 +321,6 @@ Since the let clause in this function is a little involved, an explanation:
 > interpret fn = do
 >     file <- liftIO $ readFile fn
 >     let s = foldl (\ s1 s2 -> Seq s1 s2) Pass $ map (\ s -> (read s)::Statement) $ lines file
->     runS Map.empty s 
+>     runS s
 
 > main = interpret "in.gs"

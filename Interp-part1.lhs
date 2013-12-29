@@ -23,12 +23,6 @@ I plan to use these monads to construct the parts of my interpreter
 > import Control.Monad.State
 > import Control.Monad.Writer
 
-> import Control.Concurrent
-
-sorry
-
-> import System.IO.Unsafe
-
 {-------------------------------------------------------------------}
 {- The pure expression language                                    -}
 {-------------------------------------------------------------------}
@@ -116,7 +110,6 @@ Evaluate an expression
 >                | Print Expr
 >                | Seq Statement Statement
 >                | Try Statement Statement
->                | Fork Statement
 >                | Input Name 
 >                | Pass                    
 >       deriving (Eq, Read, Show)
@@ -165,11 +158,6 @@ because we have to pass through StateT and ErrorT to reach the IO monad.
 > exec (While cond s) = do st <- get
 >                          Right (B val) <- return $ runEval st (eval cond)
 >                          if val then do exec s >> exec (While cond s) else return ()
-
-> exec (Fork s) = do st <- get
->                    liftIO $ System.print "?!?!"
->                    let a = forkIO $ liftIO $ runErrorT $ (runStateT $ exec s) st 
->                    return ()                  
 
 > exec (Try s0 s1) = do catchError (exec s0) (\e -> exec s1)
 
@@ -257,25 +245,12 @@ Converting a Program to a Statement just means running the writer monad:
 Executing a "program" means compiling it and then running the
 resulting Statement with an empty variable map.
 
-runS just runs through a statement:
+> run :: Program -> IO ()
+> run program = do result <- runErrorT $ (runStateT $ exec $ snd $ runIdentity $ (runWriterT program)) Map.empty
+>                  case result of
+>                       Right ( (), env ) -> return ()                     
+>                       Left exn -> System.print ("Uncaught exception: "++exn)
 
-> runS :: Env -> Statement -> IO ()
-> runS env s = do result <- runErrorT $ (runStateT $ exec s) env
->                 case result of
->                   Right ( (), env ) -> do dump env
->                   Left exn -> System.print ("Uncaught exception: "++exn)
-
-Dump folds the Env into a single printable string with each variable on a new line in the form "name : value"
-
-> dump :: Env -> IO ()
-> dump env = do
->             System.hPutStrLn System.stderr $ Map.foldrWithKey (\ k a acc -> acc ++ (show k) ++ " : " ++ (show a) ++ "\n") "\nVar dump:\n" env
-
- 
-And run just compiles a program into a Statement and uses runS:
-
-> run :: Env -> Program -> IO ()
-> run env p = runS env $ compile p
 
 And finally some convenience functions for our syntactic sugar:
 
@@ -322,17 +297,6 @@ The program now gets the factorial of a value taken from user input!
 >             )
 >            print $ var "total"
 
-Since the let clause in this function is a little involved, an explanation:
-    - Opens a file
-    - Splits it line-by-line
-    - Parses each line into a Statement
-    - Recursively turns this list into a recursive Statement with Seq
-    - Runs the result using runS above
+to run it just evaluate
 
-> interpret :: String -> IO () 
-> interpret fn = do
->     file <- liftIO $ readFile fn
->     let s = foldl (\ s1 s2 -> Seq s1 s2) Pass $ map (\ s -> (read s)::Statement) $ lines file
->     runS Map.empty s 
-
-> main = interpret "in.gs"
+run prog10
