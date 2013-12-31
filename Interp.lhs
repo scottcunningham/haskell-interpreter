@@ -163,7 +163,7 @@ because we have to pass through StateT and ErrorT to reach the IO monad.
 >                          if val then do exec s >> exec (While cond s) else return ()
 
 > exec (Fork s) = do st <- get
->                    liftIO $ forkIO $ do { runErrorT $ runStateT $ exec $ s) st; return () }
+>                    liftIO $ forkIO $ do { runErrorT $ (runStateT $ exec $ s) st; return () }
 >                    return ()                  
 
 > exec (Try s0 s1) = do catchError (exec s0) (\e -> exec s1)
