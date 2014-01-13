@@ -122,6 +122,7 @@ Evaluate an expression
 >                | Try Statement Statement
 >                | Fork Statement
 >                | Input Name 
+>				 | Synchronised Statement
 >                | Pass                    
 >       deriving (Eq, Read, Show)
 
@@ -181,6 +182,53 @@ because we have to pass through StateT and ErrorT to reach the IO monad.
 We never actually expect to encounter one of these, the programs should run fine if we left this equation out:
                         
 > exec Pass = return ()
+
+> exec (Synchronised s) = do
+>								st <- get
+>								liftIO $ atomically $ runRunSTM st s
+>								return ()
+
+====
+STM VERSIONS
+====
+
+Note: no input/output Statements implemented because they can't be done within
+an STM block.
+
+> type RunSTM a = StateT Env (ErrorT String STM) a
+> runRunSTM env p =  runErrorT (runStateT (execSTM p) env)
+
+> setSTM :: (Name, Val) -> RunSTM ()
+> setSTM (s,val) = do 
+>						st <- get
+>						case Map.lookup s st of
+>				   	  		Nothing -> fail ("Attempting to write a non-existent variable?")
+>							Just t -> lift $ lift $ writeTVar t val
+
+> execSTM :: Statement -> RunSTM ()
+
+> execSTM (Assign s v) = do
+>								st <- get
+>								Right val <- lift $ lift $ runEval st (eval v)  
+>								setSTM (s,val)
+
+> execSTM (Seq s0 s1) = do execSTM s0 >> execSTM s1
+
+> execSTM (If cond s0 s1) = do
+>								st <- get
+>								Right (B val) <- lift $ lift $ runEval st (eval cond)
+>								if val then do execSTM s0 else do execSTM s1
+
+> execSTM (While cond s) = do
+>								st <- get
+>								Right (B val) <- lift $ lift $ runEval st (eval cond)
+>								if val then do execSTM s >> execSTM (While cond s) else return ()
+
+> execSTM (Try s0 s1) = do catchError (execSTM s0) (\e -> execSTM s1)
+
+We never actually expect to encounter one of these, the programs should run fine if we left this equation out:
+                        
+> execSTM Pass = return ()
 
 {- Pour some sugar over this -}
 {- This next section deals exclusively with defining convenience functions -}
@@ -264,8 +312,8 @@ resulting Statement with an empty variable map.
 
 runS just runs through a statement:
 
-> runS :: Env -> Statement -> IO ()
-> runS env s = do 
+> runS :: Statement -> IO ()
+> runS s = do 
 >                 myenv <- atomically $ tvarMap Map.empty $ varList [] s
 >                 result <- runErrorT $ (runStateT $ exec s) myenv
 >                 case result of
@@ -282,8 +330,8 @@ Dump folds the Env into a single printable string with each variable on a new li
 
 And run just compiles a program into a Statement and uses runS:
 
-> run :: Env -> Program -> IO ()
-> run env p = runS env $ compile p
+> run :: Program -> IO ()
+> run p = runS $ compile p
 
 And finally some convenience functions for our syntactic sugar:
 
@@ -310,6 +358,12 @@ This is why I wanted to hide the system function "print":
 
 > input :: Name -> Program
 > input var = tell $ Input (var)
+
+> fork :: Program -> Program
+> fork p = tell $ Fork (compile p)
+
+> synchronised :: Program -> Program
+> synchronised p = tell $ Synchronised (compile p)
 
 ----------
 We need to create a map of variables for STM things:
@@ -361,6 +415,26 @@ Since the let clause in this function is a little involved, an explanation:
 > interpret fn = do
 >     file <- liftIO $ readFile fn
 >     let s = foldl (\ s1 s2 -> Seq s1 s2) Pass $ map (\ s -> (read s)::Statement) $ lines file
->     runS Map.empty s 
+>     runS s 
 
-> main = interpret "in.gs"
+> main = interpret "in.gs" 
+
+> progt:: Program
+> progt = do
+>        "x" .= int 1
+>        fork (
+>          synchronised( do
+>                  "x" .= "x" .* (1::Int)
+>                  "x" .= "x" .* (1::Int)
+>                  "x" .= "x" .* (1::Int)
+>                  "x" .= "x" .* (1::Int)
+>                  "x" .= "x" .* (1::Int)
+>                  "x" .= "x" .* (1::Int)
+>                  "x" .= "x" .* (1::Int)
+>                  "x" .= "x" .- (1::Int)
+>                 
+>              )
+>        
+>          )
+>        "x" .= "x" .* (-1::Int)
+>        print $ var "x"
