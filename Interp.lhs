@@ -31,7 +31,9 @@ I plan to use these monads to construct the parts of my interpreter
 {- The pure expression language                                    -}
 {-------------------------------------------------------------------}
 
-> data Val = I Int | B Bool
+We need an empty val type too for our unitialised variables
+
+> data Val = I Int | B Bool | Empty
 >            deriving (Eq, Show, Read)
 
 > data Expr = Const Val
@@ -42,19 +44,20 @@ I plan to use these monads to construct the parts of my interpreter
 >    deriving (Eq, Show, Read)
 
 > type Name = String 
-> type Env = Map.Map Name Val
-> type MEnv = MVar Env 
+> type Env = Map.Map Name (TVar Val)
 
 > lookup k t = case Map.lookup k t of
->                Just x -> return x
+>                Just x -> do y <- readTVar x; return y
 >                Nothing -> fail ("Unknown variable "++k)
 
 {-- Monadic style expression evaluator, 
  -- with error handling and Reader monad instance to carry dictionary
  --}
 
-> type Eval a = ReaderT Env (ErrorT String Identity) a 
-> runEval env ex = runIdentity ( runErrorT ( runReaderT ex env) )
+We no longer need Identity as the innermost monad, use STM instead.
+
+> type Eval a = ReaderT Env (ErrorT String STM) a 
+> runEval env ex = (runErrorT (runReaderT ex env))
 
 This evaluator could be a little neater 
 
@@ -100,10 +103,12 @@ Evaluate an expression
 > eval (Eq e0 e1) = do evalib (==) e0 e1
 > eval (Gt e0 e1) = do evalib (>) e0 e1
 > eval (Lt e0 e1) = do evalib (<) e0 e1
-                        
-> eval (Var s) = do env <- ask
->                   lookup s env
+                    
+-- With STM, we need to explicitly lift this lookup.
 
+> eval (Var s) = do st <- ask 
+>                   result <- lift $ lift $ lookup s st
+>                   return result
 
 {-------------------------------------------------------------------}
 {- The statement language                                          -}
@@ -118,38 +123,31 @@ Evaluate an expression
 >                | Fork Statement
 >                | Input Name 
 >                | Pass                    
->                | Synchronised Statement
 >       deriving (Eq, Read, Show)
 
 
 The 'Pass' statement is useful when making Statement an instance of
 Monoid later on, we never actually expect to see it in a real program.
 
-> type Run a = StateT MEnv (ErrorT String IO) a 
-> runRun p =  runErrorT ( runStateT p Map.empty) 
+> type Run a = StateT Env (ErrorT String IO) a
+> runRun p =  runErrorT ( runStateT p Map.empty)
 
 > set :: (Name, Val) -> Run ()
-
-set (s,i) = state $ (\table -> ((), Map.insert s i table))
-
-> set (s,val) = do
->                   st <- get
->                   env <- liftIO $ takeMVar st
->                   liftIO $ putMVar st (Map.insert s val env) 
->                   return ()
+> set (s,val) = do st <- get
+>                  case Map.lookup s st of
+>				   		Nothing -> fail ("Attempting to write a non-existent variable?")
+>						Just t -> do liftIO (atomically $ writeTVar t val)
 
 > exec :: Statement -> Run ()
 
 > exec (Assign s v) = do st <- get
->                        env <- liftIO $ readMVar st
->                        Right val <- return $ runEval env (eval v)  
+>                        Right val <- liftIO $ atomically $ runEval st (eval v)  
 >                        set (s,val)
 
 > exec (Seq s0 s1) = do exec s0 >> exec s1
 
 > exec (Print e) = do st <- get
->                     env <- liftIO $ readMVar st
->                     Right val <- return $ runEval env (eval e) 
+>                     Right val <- liftIO $ atomically $ runEval st (eval e) 
 >                     liftIO $ System.print val
 >                     return () 
 
@@ -160,23 +158,18 @@ set (s,i) = state $ (\table -> ((), Map.insert s i table))
 >   set (name, (I value))
 >   return ()
 
-> exec (Synchronised s) = do execAtomic s
-
 The transformer libraries define an overloaded "liftIO" operation that passes the required operation along the stack of monads to the next "liftIO" in line until the actual IO monad is reached. In this case it's equivalent to :
 
  lift . lift . System.IO.print
 
 because we have to pass through StateT and ErrorT to reach the IO monad.
 
-
 > exec (If cond s0 s1) = do st <- get
->                           env <- liftIO $ readMVar st
->                           Right (B val) <- return $ runEval env (eval cond)
+>                           Right (B val) <- liftIO $ atomically $ runEval st (eval cond)
 >                           if val then do exec s0 else do exec s1
 
 > exec (While cond s) = do st <- get
->                          env <- liftIO $ readMVar st
->                          Right (B val) <- return $ runEval env (eval cond)
+>                          Right (B val) <- liftIO $ atomically $ runEval st (eval cond)
 >                          if val then do exec s >> exec (While cond s) else return ()
 
 > exec (Fork s) = do st <- get
@@ -273,21 +266,20 @@ runS just runs through a statement:
 
 > runS :: Env -> Statement -> IO ()
 > runS env s = do 
->                 menv <- newMVar env
->                 result <- runErrorT $ (runStateT $ exec s) menv
+>                 myenv <- atomically $ tvarMap Map.empty $ varList [] s
+>                 result <- runErrorT $ (runStateT $ exec s) myenv
 >                 case result of
->                   Right ( (), menv ) -> do
->                                           env <- readMVar menv
->                                           dump env
+>                   Right ( (), myenv ) -> do
+>                                           dump myenv
 >                   Left exn -> System.print ("Uncaught exception: "++exn)
 
 Dump folds the Env into a single printable string with each variable on a new line in the form "name : value"
 
 > dump :: Env -> IO ()
-> dump env = do
->             System.hPutStrLn System.stderr $ Map.foldrWithKey (\ k a acc -> acc ++ (show k) ++ " : " ++ (show a) ++ "\n") "\nVar dump:\n" env
+> dump env = do System.hPutStrLn System.stderr "\nVar dump:\n"
+>		let showpair (k, v) = do { v' <- atomically $ readTVar v; System.hPutStrLn System.stderr (k ++ ": " ++ (show v')); } in
+>					mapM_ showpair $ Map.toList env
 
- 
 And run just compiles a program into a Statement and uses runS:
 
 > run :: Env -> Program -> IO ()
@@ -318,6 +310,26 @@ This is why I wanted to hide the system function "print":
 
 > input :: Name -> Program
 > input var = tell $ Input (var)
+
+----------
+We need to create a map of variables for STM things:
+
+> varList :: [Name] -> Statement -> [Name]
+> varList m (Seq s0 s1) 	= (varList m s0) ++ (varList m s1)
+> varList m (Assign n e) 	= (n:m)
+> varList m _				= m
+
+ tvarMap :: Env -> [String] -> STM (Env)
+ tvarMap m [] = return m
+ tvarMap m (x:xs) = case Map.member x m of
+						False -> do t <- newTVar Empty; tvarMap (Map.insert x t m) xs
+						True -> tvarMap m xs
+
+> tvarMap ::Map.Map String (TVar Val) -> [String] -> STM (Map.Map String (TVar Val))
+> tvarMap m [] 		= return m
+> tvarMap m (x:xs) 	= do 
+>						t <- newTVar Empty
+>						tvarMap (Map.insert x t m) xs
 
 Phew.
 
