@@ -25,6 +25,8 @@ I plan to use these monads to construct the parts of my interpreter
 
 > import Control.Concurrent
 
+> import Control.Concurrent.STM
+
 {-------------------------------------------------------------------}
 {- The pure expression language                                    -}
 {-------------------------------------------------------------------}
@@ -116,6 +118,7 @@ Evaluate an expression
 >                | Fork Statement
 >                | Input Name 
 >                | Pass                    
+>                | Synchronised Statement
 >       deriving (Eq, Read, Show)
 
 
@@ -156,6 +159,8 @@ set (s,i) = state $ (\table -> ((), Map.insert s i table))
 >   let value = (read input)::Int
 >   set (name, (I value))
 >   return ()
+
+> exec (Synchronised s) = do execAtomic s
 
 The transformer libraries define an overloaded "liftIO" operation that passes the required operation along the stack of monads to the next "liftIO" in line until the actual IO monad is reached. In this case it's equivalent to :
 

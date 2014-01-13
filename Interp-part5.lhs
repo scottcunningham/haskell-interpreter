@@ -293,10 +293,10 @@ runS just runs through a statement:
 
 > fte :: Expr -> Maybe String
 > fte e = case e of
->               (Eq e0 e1) -> trivialMsg "equals" e0 e1
+>               (Eq e0 e1) -> trivialMsg "eq" e0 e1
 >               (Gt e0 e1) -> trivialMsg "gt" e0 e1
 >               (Lt e0 e1) -> trivialMsg "lt" e0 e1
->               blah       -> Nothing
+>               _          -> Nothing
 >               where trivialMsg op e0 e1 = if (e0 == e1) then Just ("Trivial operation " ++ (show op) ++ " comparing " ++ (show e0) ++ " and " ++ (show e1)) else Nothing
 
 eval (Eq e0 e1) = do evalib (==) e0 e1
