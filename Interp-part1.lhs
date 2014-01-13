@@ -300,3 +300,5 @@ The program now gets the factorial of a value taken from user input!
 to run it just evaluate
 
 run prog10
+
+> main = run prog10

@@ -417,4 +417,4 @@ Since the let clause in this function is a little involved, an explanation:
 >     let s = foldl (\ s1 s2 -> Seq s1 s2) Pass $ map (\ s -> (read s)::Statement) $ lines file
 >     runS s 
 
-> main = interpret "in4.gs"
+> main = interpret "in4.in"

@@ -1,0 +1,5 @@
+Assign "a" (Const (B False))
+Assign "b" (Const (I 10))
+Assign "c" (Const (I 42))
+Assign "x" (Add (Var "b") (Var "c"))
+Print (Var "x")

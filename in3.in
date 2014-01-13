@@ -1,0 +1,5 @@
+Assign "x" (Const (I 1))
+Assign "y" (Const (I 2))
+Print (Var "x")
+Fork (Assign "y" (Const (I 1)))
+While (Eq (Var "x") (Const (I 1))) (Seq (Assign "x" (Const (I 3))) (Print (Var "x")))
